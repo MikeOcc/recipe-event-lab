@@ -1,0 +1,22 @@
+
+# Dependencies
+node_modules/
+
+# Generated AWS CDK assets
+cdk.out/
+
+# Build and test output
+dist/
+coverage/
+*.tsbuildinfo
+
+# Local secrets
+.env
+.env.*
+!.env.example
+.recipe-event-lab-token
+*.pem
+*.key
+
+# macOS
+.DS_Store
