@@ -31,6 +31,15 @@ export class RecipeEventLabStack extends cdk.Stack {
       removalPolicy: cdk.RemovalPolicy.DESTROY, // Demo data is disposable.
     });
 
+    const recipesTable = new dynamodb.Table(this, "Recipes", {
+      partitionKey: {
+        name: "recipeId",
+        type: dynamodb.AttributeType.STRING,
+      },
+      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      removalPolicy: cdk.RemovalPolicy.RETAIN,
+    });
+
     const archive = new dynamodb.Table(this, "FailedRecipeMessages", {
       partitionKey: {
         name: "messageKey",
@@ -248,5 +257,8 @@ export class RecipeEventLabStack extends cdk.Stack {
     new cdk.CfnOutput(this, "ApiUrl", { value: api.apiEndpoint });
     new cdk.CfnOutput(this, "TopicArn", { value: topic.topicArn });
     new cdk.CfnOutput(this, "TableName", { value: table.tableName });
+    new cdk.CfnOutput(this, "RecipesTableName", {
+      value: recipesTable.tableName,
+    });
   }
 }
