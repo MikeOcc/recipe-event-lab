@@ -2,6 +2,23 @@
 
 A minimal **working** TypeScript + React project designed to demonstrate asynchronous fan-out, failure isolation, retries, dead-letter queues, and status tracing. It is **not** an America's Test Kitchen product; all recipes are fictional sample data.
 
+## At a glance
+
+One recipe submission fans out to three independent consumers. When one of them fails, the others finish normally; the failing one retries and then lands in its own dead-letter queue, and the dashboard shows every step.
+
+- **Fan-out:** an SNS topic delivers each event to three SQS queues (search, nutrition, audit), each consumed by its own Lambda.
+- **Retries and DLQs:** each queue retries a failed message up to 3 times (60-second visibility timeout), then moves it to that queue's dead-letter queue, where a recorder Lambda marks it `FAILED`.
+- **Partial batch failures:** workers report only the messages that failed (`reportBatchItemFailures`), so the successful messages in a batch aren't redelivered.
+- **Idempotent status updates:** redelivered messages don't corrupt the status record in DynamoDB (see section 6).
+- **Tracing:** `GET /recipes/{eventId}` returns each consumer's status: `SUCCEEDED`, `RETRYING`, or `FAILED` once it reaches the DLQ.
+- **Built with:** TypeScript, AWS CDK, API Gateway, Lambda, SNS, SQS, DynamoDB, React (Vite), and CI on GitHub Actions.
+
+<!-- Screenshot: add docs/dashboard.png and uncomment.
+![Dashboard: one event, three consumers, nutrition retrying into its DLQ](docs/dashboard.png)
+-->
+
+Want to see it run? Sections 5 and 8 walk through the failure demo in a few minutes.
+
 ## Architecture
 
 ```text
