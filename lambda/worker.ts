@@ -1,15 +1,7 @@
-
 import { SQSEvent, SQSBatchResponse } from "aws-lambda";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
-import {
-  DynamoDBDocumentClient,
-  UpdateCommand,
-} from "@aws-sdk/lib-dynamodb";
-import {
-  RecipeEvent,
-  WorkKind,
-  INGREDIENT_UNITS,
-} from "./common";
+import { DynamoDBDocumentClient, UpdateCommand } from "@aws-sdk/lib-dynamodb";
+import { RecipeEvent, WorkKind, INGREDIENT_UNITS } from "./common";
 
 const db = DynamoDBDocumentClient.from(new DynamoDBClient({}));
 
@@ -17,54 +9,114 @@ const table = process.env.TABLE_NAME!;
 const worker = process.env.WORKER as WorkKind;
 
 // Validate an incoming SNS event before processing it.
-function isRecipeEvent(value: unknown): value is RecipeEvent {
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+export function isRecipeEvent(value: unknown): value is RecipeEvent {
+  if (!isRecord(value)) return false;
+
   if (
-    typeof value !== "object" ||
-    value === null ||
-    Array.isArray(value)
+    value.eventType !== "recipe.published" ||
+    typeof value.eventId !== "string" ||
+    !value.eventId ||
+    typeof value.occurredAt !== "string" ||
+    !value.occurredAt
   ) {
     return false;
   }
 
-  const event = value as Partial<RecipeEvent>;
+  const recipe = value.recipe;
+  const demo = value.demo;
 
   if (
-    event.eventType !== "recipe.published" ||
-    event.version !== 2 ||
-    typeof event.eventId !== "string" ||
-    !event.eventId ||
-    typeof event.occurredAt !== "string" ||
-    typeof event.recipe?.title !== "string" ||
-    !event.recipe.title.trim() ||
-    !Array.isArray(event.recipe.ingredients) ||
-    event.recipe.ingredients.length === 0 ||
-    typeof event.demo?.failNutrition !== "boolean"
+    !isRecord(recipe) ||
+    typeof recipe.title !== "string" ||
+    !recipe.title.trim() ||
+    !isRecord(demo) ||
+    typeof demo.failNutrition !== "boolean" ||
+    !Array.isArray(recipe.ingredients) ||
+    recipe.ingredients.length < 1 ||
+    recipe.ingredients.length > 30
   ) {
     return false;
   }
 
-  return event.recipe.ingredients.every((ingredient) =>
-    ingredient !== null &&
-    typeof ingredient === "object" &&
-    typeof ingredient.name === "string" &&
-    ingredient.name.trim().length > 0 &&
-    typeof ingredient.quantity === "number" &&
-    Number.isFinite(ingredient.quantity) &&
-    ingredient.quantity > 0 &&
-    typeof ingredient.unit === "string" &&
-    (INGREDIENT_UNITS as readonly string[]).includes(ingredient.unit) &&
-    (
-      ingredient.notes === undefined ||
-      typeof ingredient.notes === "string"
+  const ingredientsValid = recipe.ingredients.every(
+    (ingredient: unknown) =>
+      isRecord(ingredient) &&
+      typeof ingredient.name === "string" &&
+      ingredient.name.trim().length > 0 &&
+      typeof ingredient.quantity === "number" &&
+      Number.isFinite(ingredient.quantity) &&
+      ingredient.quantity > 0 &&
+      typeof ingredient.unit === "string" &&
+      (INGREDIENT_UNITS as readonly string[]).includes(ingredient.unit) &&
+      (ingredient.notes === undefined || typeof ingredient.notes === "string"),
+  );
+
+  if (!ingredientsValid) return false;
+
+  // Existing event contract remains supported.
+  if (value.version === 2) return true;
+
+  if (value.version !== 3) return false;
+
+  // Version 3 carries a saved recipe and its revision.
+  if (
+    typeof value.recipeId !== "string" ||
+    !value.recipeId ||
+    typeof value.revision !== "number" ||
+    !Number.isInteger(value.revision) ||
+    value.revision < 1 ||
+    recipe.recipeId !== value.recipeId ||
+    recipe.revision !== value.revision ||
+    typeof recipe.description !== "string" ||
+    typeof recipe.servings !== "number" ||
+    !Number.isInteger(recipe.servings) ||
+    recipe.servings < 1 ||
+    typeof recipe.prepMinutes !== "number" ||
+    !Number.isInteger(recipe.prepMinutes) ||
+    recipe.prepMinutes < 0 ||
+    typeof recipe.cookMinutes !== "number" ||
+    !Number.isInteger(recipe.cookMinutes) ||
+    recipe.cookMinutes < 0 ||
+    typeof recipe.createdAt !== "string" ||
+    typeof recipe.updatedAt !== "string" ||
+    (recipe.imageUrl !== undefined && typeof recipe.imageUrl !== "string")
+  ) {
+    return false;
+  }
+
+  if (
+    !Array.isArray(recipe.instructions) ||
+    recipe.instructions.length < 1 ||
+    recipe.instructions.length > 50 ||
+    !recipe.instructions.every(
+      (instruction: unknown, index: number) =>
+        isRecord(instruction) &&
+        instruction.step === index + 1 &&
+        typeof instruction.text === "string" &&
+        instruction.text.trim().length > 0 &&
+        instruction.text.length <= 1000,
+    )
+  ) {
+    return false;
+  }
+
+  return (
+    Array.isArray(recipe.tags) &&
+    recipe.tags.length <= 20 &&
+    recipe.tags.every(
+      (tag: unknown) =>
+        typeof tag === "string" && tag.trim().length > 0 && tag.length <= 50,
     )
   );
 }
 
 // Update this worker's processing status in DynamoDB.
-async function updateStatus(
-  eventId: string,
-  value: Record<string, unknown>
-) {
+async function updateStatus(eventId: string, value: Record<string, unknown>) {
   // Repeated delivery updates the same status field.
   await db.send(
     new UpdateCommand({
@@ -78,7 +130,7 @@ async function updateStatus(
       ExpressionAttributeValues: {
         ":value": value,
       },
-    })
+    }),
   );
 }
 
@@ -106,16 +158,14 @@ async function processRecipe(value: unknown) {
     case "search": {
       // NEW: Extract names from ingredient objects.
       const ingredientNames = event.recipe.ingredients.map(
-        (ingredient) => ingredient.name
+        (ingredient) => ingredient.name,
       );
 
-      const words = [
-        event.recipe.title,
-        ...ingredientNames,
-      ]
-        .join(" ")
-        .toLowerCase()
-        .match(/[a-z]+/g) || [];
+      const words =
+        [event.recipe.title, ...ingredientNames]
+          .join(" ")
+          .toLowerCase()
+          .match(/[a-z]+/g) || [];
 
       result = {
         keywords: [...new Set(words)].slice(0, 20),
@@ -137,6 +187,12 @@ async function processRecipe(value: unknown) {
         receivedEventType: event.eventType,
         sourceOccurredAt: event.occurredAt,
         version: event.version,
+        ...(event.version === 3
+          ? {
+              recipeId: event.recipeId,
+              revision: event.revision,
+            }
+          : {}),
       };
       break;
     }
@@ -157,14 +213,12 @@ async function processRecipe(value: unknown) {
       eventId: event.eventId,
       worker,
       action: "succeeded",
-    })
+    }),
   );
 }
 
 // SQS Lambda handler.
-export const handler = async (
-  event: SQSEvent
-): Promise<SQSBatchResponse> => {
+export const handler = async (event: SQSEvent): Promise<SQSBatchResponse> => {
   const batchItemFailures: { itemIdentifier: string }[] = [];
 
   for (const record of event.Records) {
@@ -179,7 +233,7 @@ export const handler = async (
           worker,
           messageId: record.messageId,
           error: String(error),
-        })
+        }),
       );
 
       // Only failed messages should be retried.

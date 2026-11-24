@@ -1,4 +1,3 @@
-
 import { APIGatewayProxyEventV2 } from "aws-lambda";
 
 // --------------------------------------------------
@@ -26,8 +25,7 @@ export const INGREDIENT_UNITS = [
   "pinch",
 ] as const;
 
-export type IngredientUnit =
-  (typeof INGREDIENT_UNITS)[number];
+export type IngredientUnit = (typeof INGREDIENT_UNITS)[number];
 
 export interface RecipeIngredient {
   name: string;
@@ -82,27 +80,41 @@ export interface Recipe extends RecipePayloadV2 {
 // SNS event definitions
 // --------------------------------------------------
 
-export interface RecipeEvent {
+export interface RecipeEventV2 {
   eventId: string;
   eventType: "recipe.published";
   version: 2;
   occurredAt: string;
-
   recipe: RecipePayloadV2;
+  demo: {
+    failNutrition: boolean;
+  };
+}
+
+export interface RecipeEventV3 {
+  eventId: string;
+  eventType: "recipe.published";
+  version: 3;
+  occurredAt: string;
+
+  recipeId: string;
+  revision: number;
+
+  // Snapshot of the recipe at publication time.
+  recipe: Recipe;
 
   demo: {
     failNutrition: boolean;
   };
 }
 
+export type RecipeEvent = RecipeEventV2 | RecipeEventV3;
+
 // --------------------------------------------------
 // HTTP response helper
 // --------------------------------------------------
 
-export function response(
-  statusCode: number,
-  data: unknown,
-) {
+export function response(statusCode: number, data: unknown) {
   return {
     statusCode,
     headers: {
@@ -116,17 +128,13 @@ export function response(
 // Demo API authorization
 // --------------------------------------------------
 
-export function authorized(
-  event: APIGatewayProxyEventV2,
-): boolean {
+export function authorized(event: APIGatewayProxyEventV2): boolean {
   // Portfolio demo only.
   // Use JWT/OIDC for a public application.
 
   const token = event.headers?.["x-demo-token"];
 
   return Boolean(
-    token &&
-    process.env.DEMO_TOKEN &&
-    token === process.env.DEMO_TOKEN
+    token && process.env.DEMO_TOKEN && token === process.env.DEMO_TOKEN,
   );
 }
