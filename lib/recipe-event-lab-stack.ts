@@ -107,6 +107,7 @@ export class RecipeEventLabStack extends cdk.Stack {
         environment: { TABLE_NAME: table.tableName, WORKER: worker.key },
       });
       table.grantReadWriteData(fn);
+
       fn.addEventSource(
         new eventSources.SqsEventSource(queue, {
           batchSize: 1,
@@ -230,6 +231,20 @@ export class RecipeEventLabStack extends cdk.Stack {
     });
     table.grantReadData(status);
 
+    const savedRecipes = new nodejs.NodejsFunction(this, "SavedRecipesApi", {
+      ...functionDefaults,
+      entry: path.join(__dirname, "../lambda/saved-recipes.ts"),
+      handler: "handler",
+      environment: {
+        RECIPES_TABLE_NAME: recipesTable.tableName,
+        DEMO_TOKEN: demoToken.valueAsString,
+      },
+    });
+
+    //recipesTable.grantReadWriteData(savedRecipes);
+
+    recipesTable.grant(savedRecipes, "dynamodb:GetItem", "dynamodb:PutItem");
+
     const api = new apigw.HttpApi(this, "RecipeApi", {
       corsPreflight: {
         allowOrigins: ["http://localhost:5173"],
@@ -251,6 +266,24 @@ export class RecipeEventLabStack extends cdk.Stack {
       integration: new integrations.HttpLambdaIntegration(
         "StatusRoute",
         status,
+      ),
+    });
+
+    api.addRoutes({
+      path: "/saved-recipes",
+      methods: [apigw.HttpMethod.POST],
+      integration: new integrations.HttpLambdaIntegration(
+        "CreateSavedRecipeRoute",
+        savedRecipes,
+      ),
+    });
+
+    api.addRoutes({
+      path: "/saved-recipes/{recipeId}",
+      methods: [apigw.HttpMethod.GET],
+      integration: new integrations.HttpLambdaIntegration(
+        "GetSavedRecipeRoute",
+        savedRecipes,
       ),
     });
 
